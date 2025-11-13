@@ -291,6 +291,10 @@ def parameter_sensitivity_analysis(f, bounds, max_iter=50):
     plt.tight_layout()
     plt.show()
 
+if __name__ == "__main__":
+    run_and_compare()
+
+
 # ==========================
 # Run and compare all
 # ==========================
@@ -318,7 +322,3 @@ def run_and_compare():
 
         # Parameter sensitivity
         parameter_sensitivity_analysis(f, (l_bound, u_bound), max_iter=max_iters)
-
-
-if __name__ == "__main__":
-    run_and_compare()
