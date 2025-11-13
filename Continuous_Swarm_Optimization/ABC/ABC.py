@@ -742,50 +742,57 @@ def plot_performance_dashboard(results_iter, results_nfe, fitness_func, max_nfe_
                 individual = pop_arr[0] if pop_arr.ndim == 2 else pop_arr
                 gen_fitness_history.append(func(individual))
         return gen_fitness_history
-    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+
     # --- ĐỒ THỊ 1: Best So Far (theo Iteration) ---
-    ax1 = axs[0, 0]
+    plt.figure(figsize=(10, 6))
     for name, (pos_hist, best_hist) in results_iter.items():
-        ax1.plot(best_hist, label=name)
-    ax1.set_title("1. Best-So-Far (theo Iteration)")
-    ax1.set_xlabel("Iterations")
-    ax1.set_ylabel("Fitness")
-    ax1.legend()
+        plt.plot(best_hist, label=name)
+
+    plt.title(f"Best-So-Far (theo Iteration) - {fitness_func.__name__}")
+    plt.xlabel("Iterations")
+    plt.ylabel("Fitness")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
     # --- ĐỒ THỊ 2: Best of Generation (theo Iteration) ---
-    ax2 = axs[0, 1]
+    plt.figure(figsize=(10, 6))
     for name, (pos_hist, best_hist) in results_iter.items():
-        # Tính lại fitness từng thế hệ từ positions_history
         gen_hist = get_gen_fitness(pos_hist, fitness_func)
-        ax2.plot(gen_hist, label=name)
-    ax2.set_title("2. Best-of-Generation (theo Iteration)")
-    ax2.set_xlabel("Iterations")
-    ax2.set_ylabel("Fitness")
-    ax2.legend()
+        plt.plot(gen_hist, label=name)
+
+    plt.title(f"Best-of-Generation (theo Iteration) - {fitness_func.__name__}")
+    plt.xlabel("Iterations")
+    plt.ylabel("Fitness")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
     # --- ĐỒ THỊ 3: Best So Far (theo NFE) ---
-    ax3 = axs[1, 0]
+    plt.figure(figsize=(10, 6))
     for name, (pos_hist, best_hist) in results_nfe.items():
         x_axis = np.linspace(0, max_nfe_limit, len(best_hist))
-        ax3.plot(x_axis, best_hist, label=name)
-    ax3.set_title("3. Best-So-Far (theo NFE)")
-    ax3.set_xlabel("NFE")
-    ax3.set_ylabel("Fitness")
-    ax3.legend()
+        plt.plot(x_axis, best_hist, label=name)
+
+    plt.title(f"Best-So-Far (theo NFE) - {fitness_func.__name__}")
+    plt.xlabel("NFE")
+    plt.ylabel("Fitness")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
     # --- ĐỒ THỊ 4: Best of Generation (theo NFE) ---
-    ax4 = axs[1, 1]
+    plt.figure(figsize=(10, 6))
     for name, (pos_hist, best_hist) in results_nfe.items():
         gen_hist = get_gen_fitness(pos_hist, fitness_func)
         x_axis = np.linspace(0, max_nfe_limit, len(gen_hist))
-        ax4.plot(x_axis, gen_hist, label=name)
-    ax4.set_title("4. Best-of-Generation (theo NFE)")
-    ax4.set_xlabel("NFE")
-    ax4.set_ylabel("Fitness")
-    ax4.legend()
+        plt.plot(x_axis, gen_hist, label=name)
 
-    plt.suptitle(f"Phân tích hội tụ hàm: {fitness_func.__name__}")
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Chừa chỗ cho suptitle
+    plt.title(f"Best-of-Generation (theo NFE) - {fitness_func.__name__}")
+    plt.xlabel("NFE")
+    plt.ylabel("Fitness")
+    plt.legend()
+    plt.grid(True)
     plt.show()
 
 target_func = rastrigin_function
@@ -821,97 +828,158 @@ plot_performance_dashboard(
     max_nfe_limit=MAX_NFE
 )
 
-def analyze_sensitivity(
-    algorithm_class,      # Class thuật toán
-    fitness_func,         # Hàm fitness
-    base_params,          # Các tham số cố định
-    param1,               # Tuple: ('tên_tham_số', [danh_sách_giá_trị])
-    param2=None,          # Tuple (Tùy chọn): ('tên_tham_số', [danh_sách_giá_trị])
-    repeats=5,            # Số lần chạy lấy trung bình
-    base_seed=42
-):
+class SensitivityAnalyzer:
+    def __init__(self, algorithm_class, fixed_params, base_seed=42):
+        self.algorithm_class = algorithm_class
+        self.fixed_params = fixed_params
+        self.base_seed = base_seed
 
-    p1_name, p1_values = param1
-    func_name = fitness_func.__name__.replace('_function', '').title()
+    def _prepare_params(self, param_name, val, current_params):
+        params = current_params.copy()
 
-    if param2 is None:
-        print(f"\nKiểm tra '{p1_name}' ---")
+        if param_name == 'population_size' and 'ArtificialBeeColony' in self.algorithm_class.__name__:
+            if 'num_employed' in params: del params['num_employed']
+            if 'num_onlooker' in params: del params['num_onlooker']
+            params['num_employed'] = int(val / 2)
+            params['num_onlooker'] = int(val / 2)
+        else:
+            params[param_name] = val
+
+        return params
+
+    def _run_trials(self, fitness_func, params, repeats):
+        fits = []
+        for r in range(repeats):
+            np.random.seed(self.base_seed + r)
+            lb, ub = get_function_bounds(fitness_func)
+            run_params = params.copy()
+            if 'lower_bound' not in self.fixed_params: run_params['lower_bound'] = lb
+            if 'upper_bound' not in self.fixed_params: run_params['upper_bound'] = ub
+
+            solver = self.algorithm_class(fitness_func=fitness_func, **run_params)
+            _, _, best_fit, _ = solver.run_by_iteration()
+            fits.append(best_fit)
+        return np.mean(fits)
+
+    def analyze_single_param(self, fitness_func, param_name, param_values, repeats=5):
+        print(f"\n--- Phân tích đơn: '{param_name}' trên hàm {fitness_func.__name__} ---")
         results = []
 
-        for val in p1_values:
-            print(f"  > {p1_name} = {val}")
-            fits = []
-            for r in range(repeats):
-                np.random.seed(base_seed + r)
-                params = base_params.copy()
-                params[p1_name] = val
-                solver = algorithm_class(fitness_func=fitness_func, **params)
-                res = solver.run_by_iteration()
-
-                fits.append(res[2])
-
-            results.append(np.mean(fits))
+        for val in param_values:
+            print(f" > Testing {param_name} = {val}...", end='\r')
+            params = self._prepare_params(param_name, val, self.fixed_params)
+            mean_fit = self._run_trials(fitness_func, params, repeats)
+            results.append(mean_fit)
 
         plt.figure(figsize=(8, 5))
-        plt.plot(p1_values, results, marker='o')
-        plt.xlabel(p1_name)
+        plt.plot(param_values, results, marker='o', linestyle='-', color='b')
+        plt.xlabel(param_name)
         plt.ylabel(f"Mean Best Fitness ({repeats} runs)")
-        plt.title(f"Độ nhạy: {p1_name} ({algorithm_class.__name__})")
+        plt.title(f"Độ nhạy: {param_name} ({self.algorithm_class.__name__})")
+        plt.grid(True, linestyle='--', alpha=0.6)
         plt.show()
 
-    else:
-        p2_name, p2_values = param2
-        print(f"\nKiểm tra: '{p1_name}', '{p2_name}' ---")
+    def analyze_dual_params(self, fitness_func, param1, param2, repeats=5):
+        p1_name, p1_vals = param1
+        p2_name, p2_vals = param2
 
-        matrix = np.zeros((len(p1_values), len(p2_values)))
+        print(f"\n--- Phân tích kép: '{p1_name}' vs '{p2_name}' ---")
+        matrix = np.zeros((len(p1_vals), len(p2_vals)))
 
-        for i, val1 in enumerate(p1_values):
-            for j, val2 in enumerate(p2_values):
-                print(f"  > {p1_name}={val1}, {p2_name}={val2}...", end='\r')
-                fits = []
-                for r in range(repeats):
-                    np.random.seed(base_seed + r)
-                    params = base_params.copy()
-                    params[p1_name] = val1
-                    params[p2_name] = val2
-                    solver = algorithm_class(fitness_func=fitness_func, **params)
-                    res = solver.run_by_iteration()
+        for i, val1 in enumerate(p1_vals):
+            for j, val2 in enumerate(p2_vals):
+                print(f" > {p1_name}={val1}, {p2_name}={val2}...", end='\r')
 
-                    fits.append(res[2])
+                params = self.fixed_params.copy()
+                params = self._prepare_params(p1_name, val1, params)
+                params = self._prepare_params(p2_name, val2, params)
 
-                matrix[i, j] = np.mean(fits)
+                matrix[i, j] = self._run_trials(fitness_func, params, repeats)
 
         plt.figure(figsize=(10, 7))
-        im = plt.imshow(matrix, cmap='viridis', aspect='auto')
-        plt.colorbar(im, label=f'Mean Best Fitness ({repeats} runs)')
-        plt.xticks(np.arange(len(p2_values)), p2_values)
-        plt.yticks(np.arange(len(p1_values)), p1_values)
+        im = plt.imshow(matrix, cmap='viridis', aspect='auto', origin='lower')
+        plt.colorbar(im, label=f'Mean Best Fitness')
+
+        plt.xticks(np.arange(len(p2_vals)), p2_vals)
+        plt.yticks(np.arange(len(p1_vals)), p1_vals)
+
         plt.xlabel(p2_name, fontweight='bold')
         plt.ylabel(p1_name, fontweight='bold')
         plt.title(f"Tương quan: {p1_name} vs {p2_name}")
 
-        for i in range(len(p1_values)):
-            for j in range(len(p2_values)):
+        for i in range(len(p1_vals)):
+            for j in range(len(p2_vals)):
                 c = "white" if matrix[i, j] < np.mean(matrix) else "black"
                 plt.text(j, i, f"{matrix[i, j]:.2e}", ha="center", va="center", color=c)
 
         plt.tight_layout()
         plt.show()
 
-base = {'lower_bound': -10, 'upper_bound': 10, 'num_employed': 50, 'num_onlooker': 50, 'max_iterations': 100, 'd': 10}
+    def compare_functions(self, fitness_funcs, param_name, param_values, repeats=5):
+        print(f"\n--- So sánh đa hàm mục tiêu trên tham số '{param_name}' ---")
+        plt.figure(figsize=(10, 6))
 
-analyze_sensitivity(
+        param_values = sorted(param_values)
+
+        for func in fitness_funcs:
+            func_name = func.__name__.replace('_function', '').title()
+            print(f" > Processing function: {func_name}...")
+            mean_results = []
+
+            for val in param_values:
+                params = self._prepare_params(param_name, val, self.fixed_params)
+                mean_fit = self._run_trials(func, params, repeats)
+                mean_results.append(mean_fit)
+
+            plt.plot(param_values, mean_results, marker='o', linewidth=2, markersize=6, label=func_name)
+
+        plt.title(f"Độ nhạy của tham số '{param_name.upper()}' trên các hàm khác nhau")
+        plt.xlabel(param_name)
+        plt.ylabel("Mean Best Fitness")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+        
+base_config = {
+    'd': 2,
+    'max_iterations': 100,
+    # Lưu ý: num_employed/onlooker có thể bị ghi đè nếu test population_size
+    'num_employed': 25,
+    'num_onlooker': 25,
+    'limit': 10 # Giá trị mặc định nếu không test limit
+}
+
+analyzer = SensitivityAnalyzer(
     algorithm_class=ArtificialBeeColony,
-    fitness_func=sphere_function,
-    base_params=base,
-    param1=('limit', [1,2,3,4,5,6,7,8,9,10]),
+    fixed_params=base_config,
+    base_seed=42
+)
+
+analyzer.analyze_single_param(
+    fitness_func=rastrigin_function,
+    param_name='limit',
+    param_values=np.arange(1,10,1),
     repeats=10
 )
-analyze_sensitivity(
-    algorithm_class=ArtificialBeeColony,
-    fitness_func=sphere_function,
-    base_params=base,
+
+analyzer.compare_functions(
+    fitness_funcs=[ackley_function, rastrigin_function, rosenbrock_function, sphere_function],
+    param_name='limit',
+    param_values=np.arange(1,10,1),
+    repeats=10
+)
+
+analyzer.analyze_dual_params(
+    fitness_func=rastrigin_function,
     param1=('num_employed', [10, 20, 30, 40, 50]),
     param2=('num_onlooker', [10, 20, 30, 40, 50]),
+    repeats=10
+)
+
+analyzer.compare_functions(
+    fitness_funcs=[ackley_function, rastrigin_function, rosenbrock_function, sphere_function],
+    param_name='population_size',
+    param_values=np.arange(10,100,10),
     repeats=10
 )
