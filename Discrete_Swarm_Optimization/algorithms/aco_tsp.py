@@ -1,6 +1,6 @@
 import numpy as np
-from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from problems.tsp import tour_length
 
@@ -128,3 +128,74 @@ class AntColonyTSP:
 
         assert self.best_tour is not None
         return self.best_tour, self.best_length, history
+
+
+@dataclass
+class SensitivityEntry:
+    """Aggregate statistics for a single parameter value."""
+
+    param: str
+    value: Any
+    best_lengths: List[float]
+    mean_length: float
+    std_length: float
+
+
+def analyze_aco_sensitivity(
+    D: np.ndarray,
+    param_grid: Dict[str, List[Any]],
+    base_cfg: Optional[ACOConfig] = None,
+    runs_per_value: int = 3,
+    vary_seed: bool = True,
+) -> Dict[str, List[SensitivityEntry]]:
+    """
+    Chạy ACO nhiều lần để phân tích độ nhạy với từng tham số.
+
+    Args:
+        D: Ma trận khoảng cách.
+        param_grid: Dict của dạng {'rho': [0.3, 0.5, ...], 'n_iterations': [200, 400]}.
+        base_cfg: Cấu hình gốc để lấy mặc định cho các tham số không thay đổi.
+        runs_per_value: Số lần chạy lặp lại cho mỗi giá trị để lấy trung bình.
+        vary_seed: Nếu True thì mỗi lần lặp sẽ tăng seed để tránh trùng kết quả.
+
+    Returns:
+        Dict[param_name] -> List[SensitivityEntry] chứa mean/std của best_length.
+    """
+    if not param_grid:
+        raise ValueError("param_grid phải chứa ít nhất một tham số để phân tích.")
+    if runs_per_value <= 0:
+        raise ValueError("runs_per_value phải lớn hơn 0.")
+
+    base_cfg = base_cfg or ACOConfig()
+    results: Dict[str, List[SensitivityEntry]] = {}
+
+    for param_name, values in param_grid.items():
+        if not values:
+            continue
+        entries: List[SensitivityEntry] = []
+        for value in values:
+            best_lengths: List[float] = []
+            for run_idx in range(runs_per_value):
+                cfg = replace(base_cfg)
+                if not hasattr(cfg, param_name):
+                    raise AttributeError(f"ACOConfig không có tham số '{param_name}'.")
+                setattr(cfg, param_name, value)
+                if vary_seed and cfg.seed is not None:
+                    cfg.seed = cfg.seed + run_idx
+                solver = AntColonyTSP(D, cfg)
+                _, best_len, _ = solver.run()
+                best_lengths.append(best_len)
+            mean_length = float(np.mean(best_lengths))
+            std_length = float(np.std(best_lengths)) if len(best_lengths) > 1 else 0.0
+            entries.append(
+                SensitivityEntry(
+                    param=param_name,
+                    value=value,
+                    best_lengths=best_lengths,
+                    mean_length=mean_length,
+                    std_length=std_length,
+                )
+            )
+        results[param_name] = entries
+
+    return results

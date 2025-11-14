@@ -1,6 +1,7 @@
 import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,11 +18,15 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
+from PyQt5.QtWidgets import QButtonGroup
 
 from algorithms.aco_tsp import AntColonyTSP, ACOConfig
 from algorithms.ga_tsp import ga_tsp
@@ -59,6 +64,7 @@ class TSPVisualizer(QMainWindow):
         self.node_positions: Optional[np.ndarray] = None
         self.best_tour: Optional[List[int]] = None
         self.best_length: Optional[float] = None
+        self.best_iteration: Optional[int] = None
         self.history: Optional[List[float]] = None
         self.iter_records: List[Dict[str, Any]] = []
         self.playback_timer = QTimer(self)
@@ -103,10 +109,14 @@ class TSPVisualizer(QMainWindow):
         }
 
         self.param_inputs: Dict[str, Dict[str, QLineEdit]] = {}
+        self.aco_param_fields: Dict[str, ParamField] = {
+            field.name: field for field in self.param_config["ACO"]
+        }
 
         self._setup_ui()
         self._reset_summary()
         self._load_initial_matrix()
+        self._ensure_params_editable()
 
     def _setup_ui(self) -> None:
         central = QWidget()
@@ -119,27 +129,14 @@ class TSPVisualizer(QMainWindow):
         # --- Data group
         data_group = QGroupBox("1. Dữ liệu TSP")
         data_layout = QGridLayout()
-        self.dataset_options = [
-            ("10 đỉnh", "Discrete_Swarm_Optimization/data/weights_10.csv"),
-            ("25 đỉnh", "Discrete_Swarm_Optimization/data/weights_25.csv"),
-            ("50 đỉnh", "Discrete_Swarm_Optimization/data/weights_50.csv"),
-        ]
-        default_dataset_path = self.dataset_options[0][1]
-        self.dataset_combo = QComboBox()
-        for label, path in self.dataset_options:
-            self.dataset_combo.addItem(label, path)
-        self.dataset_combo.currentIndexChanged.connect(self._on_dataset_changed)
-
-        self.file_input = QLineEdit(default_dataset_path)
+        self.file_input = QLineEdit("Discrete_Swarm_Optimization/data/weights_25.csv")
         self.load_button = QPushButton("Nạp ma trận")
         self.load_button.clicked.connect(self._load_matrix_from_input)
         self.matrix_info_label = QLabel("Chưa tải")
         data_layout.addWidget(QLabel("Đường dẫn:"), 0, 0)
         data_layout.addWidget(self.file_input, 0, 1)
         data_layout.addWidget(self.load_button, 1, 0, 1, 2)
-        data_layout.addWidget(QLabel("Chọn ma trận:"), 2, 0)
-        data_layout.addWidget(self.dataset_combo, 2, 1)
-        data_layout.addWidget(self.matrix_info_label, 3, 0, 1, 2)
+        data_layout.addWidget(self.matrix_info_label, 2, 0, 1, 2)
         data_group.setLayout(data_layout)
         controls.addWidget(data_group)
 
@@ -160,6 +157,9 @@ class TSPVisualizer(QMainWindow):
             inputs = {}
             for row, field in enumerate(fields):
                 edit = QLineEdit(field.default)
+                edit.setReadOnly(False)
+                edit.setEnabled(True)
+                edit.setFocusPolicy(Qt.StrongFocus)
                 inputs[field.name] = edit
                 grid.addWidget(QLabel(field.label), row, 0)
                 grid.addWidget(edit, row, 1)
@@ -185,10 +185,12 @@ class TSPVisualizer(QMainWindow):
 
         result_group = QGroupBox("3. Kết quả")
         result_layout = QVBoxLayout()
-        self.best_length_label = QLabel("Độ dài tốt nhất: N/A")
-        self.tour_label = QLabel("Lộ trình: N/A")
+        self.best_length_label = QLabel("best_length: N/A")
+        self.best_iter_label = QLabel("iteration(best): N/A")
+        self.tour_label = QLabel("best_tour: N/A")
         self.tour_label.setWordWrap(True)
         result_layout.addWidget(self.best_length_label)
+        result_layout.addWidget(self.best_iter_label)
         result_layout.addWidget(self.tour_label)
         result_group.setLayout(result_layout)
         controls.addWidget(result_group)
@@ -232,8 +234,8 @@ class TSPVisualizer(QMainWindow):
         summary_group = QGroupBox("Tổng quan 4 thuật toán")
         summary_layout = QGridLayout()
         summary_layout.addWidget(QLabel("Thuật toán"), 0, 0)
-        summary_layout.addWidget(QLabel("Độ dài"), 0, 1)
-        summary_layout.addWidget(QLabel("Lộ trình tốt nhất"), 0, 2)
+        summary_layout.addWidget(QLabel("best_length"), 0, 1)
+        summary_layout.addWidget(QLabel("best_tour"), 0, 2)
 
         for row, algo in enumerate(self.param_config.keys(), start=1):
             summary_layout.addWidget(QLabel(algo), row, 0)
@@ -256,6 +258,57 @@ class TSPVisualizer(QMainWindow):
         history_group_layout.addWidget(self.canvas_compare_history)
         history_group.setLayout(history_group_layout)
         compare_layout.addWidget(history_group)
+
+        sensitivity_group = QGroupBox("Phân tích độ nhạy ACO (đa seed)")
+        sensitivity_layout = QGridLayout()
+        sensitivity_layout.addWidget(QLabel("Tham số"), 0, 0)
+        param_buttons_layout = QHBoxLayout()
+        self.sensitivity_param_group = QButtonGroup(self)
+        self.sensitivity_param_buttons: Dict[str, QRadioButton] = {}
+        for idx, name in enumerate(["alpha", "beta", "rho", "q", "elitist_weight"]):
+            btn = QRadioButton(name)
+            if idx == 0:
+                btn.setChecked(True)
+            self.sensitivity_param_group.addButton(btn)
+            param_buttons_layout.addWidget(btn)
+            self.sensitivity_param_buttons[name] = btn
+        sensitivity_layout.addLayout(param_buttons_layout, 0, 1)
+
+        sensitivity_layout.addWidget(QLabel("Giá trị (phân tách ,)"), 1, 0)
+        self.sensitivity_values_input = QLineEdit("0.3, 0.5, 0.7")
+        self._ensure_line_edit_editable(self.sensitivity_values_input)
+        sensitivity_layout.addWidget(self.sensitivity_values_input, 1, 1)
+
+        sensitivity_layout.addWidget(QLabel("Seeds (5 giá trị)"), 2, 0)
+        self.sensitivity_seeds_input = QLineEdit("42, 99, 123, 2024, 4096")
+        self._ensure_line_edit_editable(self.sensitivity_seeds_input)
+        sensitivity_layout.addWidget(self.sensitivity_seeds_input, 2, 1)
+
+        sensitivity_layout.addWidget(QLabel("ε (%)"), 3, 0)
+        self.sensitivity_eps_input = QLineEdit("1")
+        self._ensure_line_edit_editable(self.sensitivity_eps_input)
+        sensitivity_layout.addWidget(self.sensitivity_eps_input, 3, 1)
+
+        self.sensitivity_run_button = QPushButton("Phân tích ACO (đa seed)")
+        self.sensitivity_run_button.clicked.connect(self._run_aco_sensitivity)
+        sensitivity_layout.addWidget(self.sensitivity_run_button, 4, 0, 1, 2)
+
+        self.sensitivity_status_label = QLabel("Chưa chạy phân tích.")
+        sensitivity_layout.addWidget(self.sensitivity_status_label, 5, 0, 1, 2)
+
+        self.sensitivity_table = QTableWidget(0, 5)
+        self.sensitivity_table.setHorizontalHeaderLabels(
+            [
+                "Giá trị",
+                "Len (mean ± std)",
+                "Δ% vs baseline",
+                "Iters-to-ε (mean ± std)",
+                "Stability (std)",
+            ]
+        )
+        sensitivity_layout.addWidget(self.sensitivity_table, 6, 0, 1, 2)
+        sensitivity_group.setLayout(sensitivity_layout)
+        compare_layout.addWidget(sensitivity_group)
         compare_layout.addStretch()
 
         scroll_area.setWidget(compare_container)
@@ -265,12 +318,7 @@ class TSPVisualizer(QMainWindow):
 
     def _load_initial_matrix(self) -> None:
         try:
-            default_path = (
-                self.dataset_combo.currentData()
-                if hasattr(self, "dataset_combo")
-                else self.file_input.text()
-            )
-            self._load_matrix(default_path)
+            self._load_matrix(self.file_input.text())
         except Exception as exc:  # pragma: no cover - only hits when file missing
             self._show_error(f"Không thể tải ma trận mặc định: {exc}")
 
@@ -291,28 +339,20 @@ class TSPVisualizer(QMainWindow):
         self.matrix_info_label.setText(f"Ma trận: {n} x {n}")
         self.best_tour = None
         self.best_length = None
+        self.best_iteration = None
         self.history = None
-        self.best_length_label.setText("Độ dài tốt nhất: N/A")
-        self.tour_label.setText("Lộ trình: N/A")
+        self.best_length_label.setText("best_length: N/A")
+        self.best_iter_label.setText("iteration(best): N/A")
+        self.tour_label.setText("best_tour: N/A")
         self._reset_summary()
+        self._ensure_params_editable()
+        self._clear_sensitivity_results()
         self._clear_plots()
         self._reset_playback_state()
 
     def _on_algorithm_changed(self) -> None:
         idx = self.algorithm_combo.currentIndex()
         self.param_container.setCurrentIndex(idx)
-
-    def _on_dataset_changed(self, index: int) -> None:
-        if not hasattr(self, "dataset_combo"):
-            return
-        path = self.dataset_combo.itemData(index)
-        if not path:
-            return
-        self.file_input.setText(path)
-        try:
-            self._load_matrix(path)
-        except Exception as exc:
-            self._show_error(str(exc))
 
     def _reset_params(self) -> None:
         algo = self.algorithm_combo.currentText()
@@ -338,7 +378,12 @@ class TSPVisualizer(QMainWindow):
         self.best_tour = best_tour
         self.best_length = best_len
         self.history = history
-        self.best_length_label.setText(f"Độ dài tốt nhất: {best_len:.2f}")
+        self.best_length_label.setText(f"best_length: {best_len:.2f}")
+        self.best_iteration = self._find_iteration_of_best(history, best_len)
+        if self.best_iteration is None:
+            self.best_iter_label.setText("iteration(best): N/A")
+        else:
+            self.best_iter_label.setText(f"iteration(best): {self.best_iteration}")
         self.tour_label.setText(" -> ".join(map(str, best_tour)))
         self._update_algo_summary(algo, best_len, best_tour)
         self.algorithm_history[algo] = history[:] if history else []
@@ -654,6 +699,24 @@ class TSPVisualizer(QMainWindow):
         self.canvas_tour.draw()
         self.canvas_history.draw()
 
+    @staticmethod
+    def _find_iteration_of_best(history: Optional[List[float]], best_len: Optional[float]) -> Optional[int]:
+        if not history or best_len is None:
+            return None
+        for idx, value in enumerate(history):
+            if math.isclose(value, best_len, rel_tol=1e-9, abs_tol=1e-9):
+                return idx + 1  # 1-based iteration/generation count
+        return len(history)
+
+    @staticmethod
+    def _compute_speed_to_threshold(history: Optional[List[float]], threshold: float) -> int:
+        if not history:
+            return 0
+        for idx, value in enumerate(history, start=1):
+            if value <= threshold:
+                return idx
+        return len(history)
+
     def _reset_summary(self) -> None:
         self.algorithm_results = {
             algo: {"length": None, "tour": None} for algo in self.param_config.keys()
@@ -664,6 +727,17 @@ class TSPVisualizer(QMainWindow):
             labels["tour"].setText("N/A")
         self._plot_compare_history()
 
+    def _ensure_params_editable(self) -> None:
+        for inputs in self.param_inputs.values():
+            for edit in inputs.values():
+                self._ensure_line_edit_editable(edit)
+
+    @staticmethod
+    def _ensure_line_edit_editable(edit: QLineEdit) -> None:
+        edit.setReadOnly(False)
+        edit.setEnabled(True)
+        edit.setFocusPolicy(Qt.StrongFocus)
+
     def _update_algo_summary(self, algo: str, length: float, tour: List[int]) -> None:
         if algo not in self.algorithm_results:
             return
@@ -673,6 +747,160 @@ class TSPVisualizer(QMainWindow):
             return
         labels["length"].setText(f"{length:.2f}")
         labels["tour"].setText(" -> ".join(map(str, tour)))
+
+    def _run_aco_sensitivity(self) -> None:
+        if self.distance_matrix is None:
+            self._show_error("Chưa có ma trận khoảng cách. Hãy nạp dữ liệu trước.")
+            return
+        param_name = self._get_selected_sensitivity_param()
+        if not param_name:
+            self._show_error("Chưa chọn tham số.")
+            return
+        try:
+            values = self._parse_sensitivity_values(param_name)
+            seeds = self._parse_seed_list(self.sensitivity_seeds_input.text())
+            if len(seeds) < 1:
+                raise ValueError("Cần ít nhất 1 seed để phân tích.")
+            epsilon_pct = float(self.sensitivity_eps_input.text().strip() or "0")
+            if epsilon_pct < 0:
+                raise ValueError("ε phải không âm.")
+            epsilon_ratio = epsilon_pct / 100.0
+            base_params = self._collect_params("ACO")
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+
+        def make_cfg(seed_value: int, override_value: Any) -> ACOConfig:
+            cfg = ACOConfig(
+                n_ants=base_params["n_ants"],
+                n_iterations=base_params["n_iterations"],
+                alpha=base_params["alpha"],
+                beta=base_params["beta"],
+                rho=base_params["rho"],
+                q=base_params["q"],
+                elitist_weight=base_params["elitist_weight"],
+                seed=seed_value,
+            )
+            setattr(cfg, param_name, override_value)
+            return cfg
+
+        baseline_value = base_params.get(param_name)
+        baseline_runs: List[Dict[str, Any]] = []
+        global_best = float("inf")
+        for seed in seeds:
+            cfg = make_cfg(seed, baseline_value)
+            solver = AntColonyTSP(self.distance_matrix, cfg)
+            _, best_len, history = solver.run()
+            baseline_runs.append({"best_len": best_len, "history": history})
+            if best_len < global_best:
+                global_best = best_len
+
+        entries: List[Dict[str, Any]] = []
+        for value in values:
+            runs: List[Dict[str, Any]] = []
+            for seed in seeds:
+                cfg = make_cfg(seed, value)
+                solver = AntColonyTSP(self.distance_matrix, cfg)
+                _, best_len, history = solver.run()
+                runs.append({"best_len": best_len, "history": history})
+                if best_len < global_best:
+                    global_best = best_len
+            entries.append({"value": value, "runs": runs})
+
+        if not entries:
+            self._show_error("Không có giá trị nào để chạy.")
+            return
+
+        eps_threshold = global_best * (1.0 + epsilon_ratio)
+        baseline_mean = float(np.mean([r["best_len"] for r in baseline_runs]))
+        table_rows: List[List[str]] = []
+        for entry in entries:
+            best_lengths = [run["best_len"] for run in entry["runs"]]
+            histories = [run["history"] for run in entry["runs"]]
+            mean_len = float(np.mean(best_lengths))
+            std_len = float(np.std(best_lengths)) if len(best_lengths) > 1 else 0.0
+            speeds = [
+                self._compute_speed_to_threshold(hist, eps_threshold)
+                for hist in histories
+            ]
+            speed_std = float(np.std(speeds)) if len(speeds) > 1 else 0.0
+            mean_speed = float(np.mean(speeds)) if speeds else float("nan")
+            delta_pct = (
+                ((mean_len - baseline_mean) / baseline_mean * 100.0)
+                if baseline_mean > 0
+                else float("nan")
+            )
+            table_rows.append(
+                [
+                    str(entry["value"]),
+                    f"{mean_len:.2f} ± {std_len:.2f}",
+                    f"{delta_pct:.2f}%",
+                    f"{mean_speed:.1f} ± {speed_std:.1f}",
+                    f"{std_len:.2f}",
+                ]
+            )
+
+        self._update_sensitivity_table(table_rows)
+        self.sensitivity_status_label.setText(
+            f"Đã chạy {len(entries)} giá trị, {len(seeds)} seed, ε={epsilon_pct:.2f}%, baseline={baseline_mean:.2f}."
+        )
+
+    def _parse_sensitivity_values(self, param_name: str) -> List[Any]:
+        text = self.sensitivity_values_input.text().strip()
+        if not text:
+            raise ValueError("Vui lòng nhập danh sách giá trị.")
+        field = self.aco_param_fields.get(param_name)
+        if field is None:
+            raise ValueError(f"Tham số '{param_name}' không hợp lệ.")
+        caster = field.cast
+        values: List[Any] = []
+        for chunk in text.replace(";", ",").split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            if field.optional and chunk.lower() in {"auto", "none"}:
+                values.append(None)
+                continue
+            try:
+                values.append(caster(chunk))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Không thể chuyển '{chunk}' sang {caster.__name__}"
+                ) from exc
+        if not values:
+            raise ValueError("Danh sách giá trị trống.")
+        return values
+
+    @staticmethod
+    def _parse_seed_list(text: str) -> List[int]:
+        cleaned = text.replace(";", ",").split(",")
+        seeds: List[int] = []
+        for item in cleaned:
+            item = item.strip()
+            if not item:
+                continue
+            seeds.append(int(item))
+        return seeds
+
+    def _get_selected_sensitivity_param(self) -> Optional[str]:
+        for name, btn in self.sensitivity_param_buttons.items():
+            if btn.isChecked():
+                return name
+        return None
+
+    def _update_sensitivity_table(self, rows: List[List[str]]) -> None:
+        table = self.sensitivity_table
+        table.setRowCount(len(rows))
+        for r, row_data in enumerate(rows):
+            for c, value in enumerate(row_data):
+                table.setItem(r, c, QTableWidgetItem(value))
+        table.resizeColumnsToContents()
+
+    def _clear_sensitivity_results(self) -> None:
+        if hasattr(self, "sensitivity_table"):
+            self.sensitivity_table.setRowCount(0)
+        if hasattr(self, "sensitivity_status_label"):
+            self.sensitivity_status_label.setText("Chưa chạy phân tích.")
 
     def _plot_compare_history(self) -> None:
         if not hasattr(self, "canvas_compare_history"):
