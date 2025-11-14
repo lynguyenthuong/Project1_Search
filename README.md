@@ -16,24 +16,24 @@ Nhóm chúng em xin hướng dẫn cách thầy kiểm tra lại các thuật to
     - IPython (nếu thầy dùng Jupyter Notebook để chạy)
 
 2. Source code của chúng em có định dạng như sau:
-    |Project1_Search
-        |Continuous_Swarm_Optimization
-            |ABC
-                |ABC.py
-            |App
-                |...
-                |app.py
-            |CS
-                |CS.py
-            |FA
-                |...
-                |FA.py
-            |PSO
-                |...
-                |PSO.py
-        |Discrete_Swarm_Optimization
-            |...
-            |tsp_app.py
+    Project1_Search
+        Continuous_Swarm_Optimization
+            ABC
+                ABC.py
+            App
+                ...
+                app.py
+            CS
+                CS.py
+            FA
+                ...
+                FA.py
+            PSO
+                ...
+                PSO.py
+        Discrete_Swarm_Optimization
+            ...
+            tsp_app.py
 
 3. Để kiểm tra cụ thể các yêu cầu trong đồ án cho các thuật toán tối ưu hóa LIÊN TỤC, mời thầy truy cập các file sau:
     - Đối với thuật toán Artificial Bee Colony:         Project1_Search\Continuous_Swarm_Optimization\ABC\ABC.py
